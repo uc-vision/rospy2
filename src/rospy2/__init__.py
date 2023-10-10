@@ -180,6 +180,10 @@ def wait_for_service(service_name):
                 break
         time.sleep(0.5)
 
+def get_namespace():
+  global _node
+  return _node.get_namespace()
+
 class Publisher(object):
     def __init__(self, topic_name, topic_type, queue_size = 1):
         global _node
@@ -281,7 +285,7 @@ class ServiceProxy(object):
 class Duration(object):
     def __new__(cls, secs, nsecs = 0):
         global _node
-        d = rclpy.duration.Duration(nanoseconds = secs * 1000000000 + nsecs)
+        d = rclpy.duration.Duration(nanoseconds = secs * rclpy.duration.S_TO_NS + nsecs)
         d.to_nsec = types.MethodType(lambda self: self.nanoseconds, d)
         d.to_sec = types.MethodType(lambda self: self.nanoseconds / 1e9, d)
         d.is_zero = types.MethodType(lambda self: self.nanoseconds == 0, d)
@@ -291,11 +295,11 @@ class Duration(object):
 
     @classmethod
     def from_sec(cls, secs):
-        return rclpy.duration.Duration(nanosecods = secs * 1000000000)
+        return rclpy.duration.Duration(nanoseconds = secs * rclpy.duration.S_TO_NS)
 
     @classmethod
     def from_seconds(cls, secs):
-        return rclpy.duration.Duration(nanosecods = secs * 1000000000)
+        return rclpy.duration.Duration(nanoseconds = secs * rclpy.duration.S_TO_NS)
 
 class Time(object):
     def __new__(cls, secs = 0, nsecs = 0):
@@ -303,11 +307,15 @@ class Time(object):
 
     @classmethod
     def from_sec(cls, secs):
-        return builtin_interfaces.msg.Time(sec = secs)
+        nanoseconds = secs * rclpy.duration.S_TO_NS
+        seconds, nanoseconds = (nanoseconds // rclpy.duration.S_TO_NS, nanoseconds % rclpy.duration.S_TO_NS)
+        return builtin_interfaces.msg.Time(sec = int(seconds), nanosec = int(nanoseconds))
+    
 
     @classmethod
     def from_seconds(cls, secs):
-        return builtin_interfaces.msg.Time(sec = secs)
+        seconds, nanoseconds = divmod(secs, rclpy.duration.S_TO_NS)
+        return builtin_interfaces.msg.Time(sec = int(seconds), nanosec = int(nanoseconds))
 
     @classmethod
     def now(cls):
@@ -316,6 +324,8 @@ class Time(object):
             raise ROSInitException("time is not initialized. Have you called init_node()?")
         secs, nsecs = _clock.now().seconds_nanoseconds()
         return builtin_interfaces.msg.Time(sec = secs, nanosec = nsecs)
+    
+    
 
 class Rate(object):
     def __init__(self, hz):
@@ -410,6 +420,61 @@ builtin_interfaces.msg.Time.secs = property(lambda self: self.sec, secs_setter)
 def nsecs_setter(self, value): self.nanosec = value
 builtin_interfaces.msg.Time.nsecs = property(lambda self: self.nanosec, nsecs_setter)
 
+def time_cmp(self: builtin_interfaces.msg.Time, other: builtin_interfaces.msg.Time):
+  if not isinstance(other, builtin_interfaces.msg.Time):
+      raise TypeError('cannot compare to non-Time')
+  a = self.to_nsec()
+  b = other.to_nsec()
+  return (a > b) - (a < b)
+builtin_interfaces.msg.Time.__cmp__ = time_cmp
+
+def time_lt(self, other):
+  try:
+    return self.__cmp__(other) < 0
+  except TypeError:
+    return NotImplemented
+builtin_interfaces.msg.Time.__lt__ = time_lt
+
+def time_add(self, other):
+  if not isinstance(other, rclpy.duration.Duration):
+      return NotImplemented
+  other_seconds, other_nanoseconds = (other.nanoseconds // rclpy.duration.S_TO_NS, other.nanoseconds % rclpy.duration.S_TO_NS)
+  return self.__class__(sec = self.secs + other_seconds, nanosec = self.nsecs + other_nanoseconds)
+builtin_interfaces.msg.Time.__add__ = time_add
+
+def time_sub(self, other):
+  if isinstance(other, builtin_interfaces.msg.Time):
+    return Duration(self.secs - other.secs, self.nsecs - other.nsecs)
+  elif isinstance(other, builtin_interfaces.msg.Duration):
+    return self.__class__(sec = self.secs - other.secs, nanosec = self.nsecs - other.nsecs)
+  elif isinstance(other, rclpy.duration.Duration):
+    other_seconds, other_nanoseconds = divmod(other.nanoseconds, rclpy.duration.S_TO_NS)
+    return self.__class__(sec = self.secs - other_seconds, nanosec = self.nsecs - other_nanoseconds)
+  else:
+    return NotImplemented
+builtin_interfaces.msg.Time.__sub__ = time_sub
+
+import rclpy.duration
+def dur_sub(self, other):
+  if not isinstance(other, rclpy.duration.Duration):
+      return NotImplemented
+  self_seconds, self_nanoseconds = divmod(self.nanoseconds, rclpy.duration.S_TO_NS)
+  other_seconds, other_nanoseconds = divmod(other.nanoseconds, rclpy.duration.S_TO_NS)
+  return self.__class__(seconds = self_seconds - other_seconds, nanoseconds = self_nanoseconds - other_nanoseconds)
+rclpy.duration.Duration.__sub__ = dur_sub
+
+def dur_add(self, other):
+  if not isinstance(other, rclpy.duration.Duration):
+      return NotImplemented
+  self_seconds, self_nanoseconds = divmod(self.nanoseconds, rclpy.duration.S_TO_NS)
+  other_seconds, other_nanoseconds = divmod(other.nanoseconds, rclpy.duration.S_TO_NS)
+  return self.__class__(seconds = self_seconds + other_seconds, nanoseconds = self_nanoseconds + other_nanoseconds)
+rclpy.duration.Duration.__add__ = dur_add
+
+def dur_to_sec(self: rclpy.duration.Duration):
+  seconds, nanoseconds = divmod(self.nanoseconds, rclpy.duration.S_TO_NS)
+  return float(seconds) + float(nanoseconds) / 1e9
+rclpy.duration.Duration.to_sec = dur_to_sec
 # Allow initializing messages with positional arguments which ROS1 allows but ROS2 doesn't, e.g.
 # KeyValue("key", "value")
 # Int32(100)
