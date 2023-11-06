@@ -60,7 +60,7 @@ def init_node(node_name, anonymous=False, log_level=INFO, disable_signals=False)
     _node = rclpy.create_node(
         node_name,
         allow_undeclared_parameters = True,
-        automatically_declare_parameters_from_overrides = True,
+        automatically_declare_parameters_from_overrides = False,
     )
     _logger = _node.get_logger()
     _clock = _node.get_clock()
